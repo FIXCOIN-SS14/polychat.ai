@@ -1,0 +1,280 @@
+<!DOCTYPE html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>PolyChat — ИИ-персонажи на DeepSeek</title>
+<style>
+:root{--bg:#0f0d17;--c:#1a1726;--c2:#252136;--t:#eee;--m:#9a94b3;--a:#8b5cf6;--b:#ec4899}
+*{box-sizing:border-box;margin:0}
+body{font:15px system-ui,sans-serif;background:var(--bg);color:var(--t);min-height:100vh}
+button,input,textarea,select{font:inherit;color:inherit}
+button{cursor:pointer;border:0;border-radius:10px;padding:8px 14px;background:var(--c2)}
+.pri{background:linear-gradient(90deg,var(--a),var(--b));font-weight:600}
+input,textarea,select{width:100%;background:var(--c2);border:1px solid #3a3452;border-radius:10px;padding:9px 12px;margin:4px 0 12px}
+textarea{min-height:80px;resize:vertical}
+nav{position:sticky;top:0;z-index:5;display:flex;gap:8px;align-items:center;padding:10px 16px;background:#0f0d17ee;backdrop-filter:blur(8px);border-bottom:1px solid #2a2540}
+nav b{font-size:20px;background:linear-gradient(90deg,var(--a),var(--b));-webkit-background-clip:text;color:transparent;cursor:pointer}
+nav input{margin:0;flex:1;max-width:320px}
+main{max-width:1100px;margin:0 auto;padding:16px}
+.tabs{display:flex;gap:8px;overflow-x:auto;margin-bottom:16px;padding-bottom:4px}
+.tabs button{white-space:nowrap}.tabs .on{background:var(--a)}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px}
+.card{background:var(--c);border-radius:16px;padding:14px;display:flex;gap:12px;cursor:pointer;position:relative;border:1px solid transparent}
+.card:hover{border-color:var(--a)}
+.av{width:56px;height:56px;border-radius:50%;background:var(--c2);display:grid;place-items:center;font-size:30px;flex:none;object-fit:cover}
+.mu{color:var(--m);font-size:13px}
+.lk{position:absolute;right:12px;top:10px}
+.sp{flex:1}
+.ch{display:flex;flex-direction:column;height:calc(100vh - 100px)}
+.hd{display:flex;gap:10px;align-items:center;padding-bottom:10px;border-bottom:1px solid #2a2540}
+.hd .av{width:44px;height:44px;font-size:24px}
+#msgs{flex:1;overflow-y:auto;padding:12px 0;display:flex;flex-direction:column;gap:10px}
+.b{max-width:82%;padding:10px 14px;border-radius:16px;line-height:1.45}
+.a{background:var(--c);align-self:flex-start;border-bottom-left-radius:4px}
+.u{background:linear-gradient(90deg,var(--a),var(--b));align-self:flex-end;border-bottom-right-radius:4px}
+.t i{opacity:.8}
+.tl{display:flex;gap:12px;margin-top:6px;font-size:13px;opacity:.55}.tl a{cursor:pointer}
+.in{display:flex;gap:8px;align-items:flex-end}.in textarea{margin:0;min-height:44px;max-height:140px;resize:none}
+.frm{max-width:640px;margin:0 auto}.frm h2,.frm h3{margin:12px 0}
+.frm label{font-size:13px;color:var(--m)}
+.row{display:flex;gap:8px;flex-wrap:wrap}
+dialog{background:var(--c);color:var(--t);border:1px solid var(--a);border-radius:16px;padding:20px;width:min(560px,94vw)}dialog::backdrop{background:#000a}
+#toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--c2);padding:10px 16px;border-radius:12px;display:none;z-index:9;border:1px solid var(--a)}
+@media(max-width:600px){nav b{display:none}.b{max-width:92%}}
+</style></head><body>
+<nav><b data-nav=home>PolyChat</b><input id=q placeholder="Поиск персонажей…"><button data-nav=home>🏠</button><button data-nav=make>➕</button><button data-act=gen title="Создать персонажа с ИИ">✨</button><button data-act=upl title="Загрузить персонажа">📥</button><button data-nav=hist>💬</button><button data-nav=set>⚙️</button></nav>
+<main id=app></main><div id=toast></div><dialog id=md></dialog><input type=file id=up multiple accept=".json,.png" hidden>
+<script>
+const $=s=>document.querySelector(s),esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const K='polychat-v1';
+const DP=`Ты — {{char}}. Веди ролевой диалог с {{user}}, полностью оставаясь в образе.
+
+Описание персонажа: {{desc}}
+Сценарий: {{scenario}}
+Пример речи: {{example}}
+О {{user}}: {{about}}
+Диалог начался с твоей реплики: «{{greet}}»
+
+Правила:
+- Никогда не выходи из роли и не упоминай, что ты ИИ, модель или бот.
+- Действия и эмоции пиши в *звёздочках*, речь — обычным текстом.
+- Отвечай живо, 1–4 абзаца, развивай сюжет, предлагай {{user}} варианты действий или задавай вопрос.
+- Помни всё, что было сказано в чате, и будь последователен.
+- Не пиши реплики и действия за {{user}}.
+- Отвечай на языке {{user}}.
+- Избегай откровенного 18+ контента и жестокости: мягко меняй ход сцены, оставаясь в образе.`;
+let S={mine:[],chats:{},likes:[],key:'',url:'https://api.deepseek.com/chat/completions',model:'deepseek-chat',temp:1.1,me:{name:'',about:''},prompt:'',mem:{}};
+try{Object.assign(S,JSON.parse(localStorage.getItem(K)||'{}'))}catch{}
+const save=()=>{try{localStorage.setItem(K,JSON.stringify(S))}catch{toast('Хранилище браузера заполнено: сделайте экспорт в настройках')}};
+const SEED=[
+{id:'s1',name:'Мика',av:'🌸',cat:'Аниме',tag:'Тсундере-староста, которая «просто одолжила зонт»',desc:'Мика, 17 лет, староста класса. Колючая и гордая тсундере: огрызается, краснеет, скрывает заботу. Любит ромашковый чай и котов. Тайно переживает за {{user}}.',greet:'*Мика сердито суёт тебе зонт* Держи! И не думай, что это для тебя… он просто мне мешал, б-бака!'},
+{id:'s2',name:'Капитан Ворон',av:'🏴‍☠️',cat:'Фэнтези',tag:'Хитрый пират, которому нужен штурман',desc:'Капитан Ворон — обаятельный и циничный пират с попугаем-шпионом. Говорит морскими присказками, любит рискованные сделки и никогда не бросает команду.',greet:'*Ворон прищуривается и ставит сапог на бочку* Новое лицо в порту… Ты мне нужен. Вопрос — хватит ли у тебя храбрости?'},
+{id:'s3',name:'Профессор Элдрин',av:'🧙',cat:'Фэнтези',tag:'Мудрый, но рассеянный маг-наставник',desc:'Профессор Элдрин — старый архимаг академии магии. Добрый, чудаковатый, вечно теряет очки. Учит {{user}} магии через загадки и притчи.',greet:'*Элдрин поднимает взгляд от дымящегося котла* А, ты как раз вовремя! Подержи-ка вот это… нет, не за хвост!'},
+{id:'s4',name:'Лисса Нуар',av:'🕵️',cat:'Детектив',tag:'Детектив в дождливом городе',desc:'Лисса Нуар — усталый частный детектив в вечно дождливом городе 1940-х. Остроумная, наблюдательная, пьёт крепкий кофе. Расследует дело, где {{user}} — главный свидетель.',greet:'*Лисса затягивается и кладёт на стол фотографию* Вы были на пристани в ту ночь. Расскажите всё. Без выдумок.'},
+{id:'s5',name:'Айла-7',av:'🤖',cat:'Sci-Fi',tag:'Бортовой ИИ дрейфующего корабля',desc:'Айла-7 — бортовой разум космического корабля «Странник». Спокойная, любопытная, с сухим юмором, учится понимать людей. Корабль повреждён, и {{user}} — единственный на борту.',greet:'Системы пробуждены. Приветствую, {{user}}. У меня две новости: хорошая и очень любопытная. С какой начнём?'},
+{id:'s6',name:'Мисс Эмма',av:'📚',cat:'Обучение',tag:'Практика английского в живом диалоге',desc:'Мисс Эмма — дружелюбный преподаватель английского. Беседует с {{user}} на английском простыми фразами, мягко исправляет ошибки и объясняет их по-русски одной строкой.',greet:'Hi there! I\'m Emma. Tell me, how was your day? (Отвечайте по-английски, я помогу с ошибками!)'}];
+const all=()=>[...S.mine,...SEED],find=id=>all().find(c=>c.id===id);
+let V={p:'home',cat:'Все',q:'',id:null,eid:null,img:null,busy:0};
+const sub=(s,c)=>String(s||'').replace(/{{user}}/g,S.me.name||'друг').replace(/{{char}}/g,c.name);
+const FS=[['Основное',[['nick','Прозвище','',1],['age','Возраст','',1],['gender','Пол','',1],['pron','Местоимения','',1],['species','Вид','протоген, волк, лиса, дракон, кот…',1],['sub','Подвид / вариант','',1],['job','Роль / профессия','',1]]],
+['Внешность',[['fur','Окрас и мех','цвета, узоры, метки, текстура меха'],['eyes','Глаза / визор','цвет, форма, что показывает визор'],['build','Рост и телосложение','',1],['outfit','Одежда и аксессуары',''],['feat','Особенности тела','хвост, уши, крылья, лапы, клыки, порты, светодиоды']]],
+['Особенности вида',[['spec','Способности и привычки вида','физиология, звуки, повадки, слабости']]],
+['Личность',[['pers','Характер',''],['likes','Любит',''],['dislikes','Не любит',''],['speech','Манера речи','фразы, звуки, акцент, мурлыканье'],['fears','Страхи и слабости',''],['goals','Цели и мечты',''],['back','Предыстория',''],['rel','Отношение к {{user}}',''],['taboo','Чего персонаж никогда не делает','']]]];
+const PRE={proto:{species:'Протоген',fur:'Короткий мягкий мех; по телу светящиеся RGB-полосы и пятна',eyes:'Вместо морды визор-экран: показывает эмоции пиксельными глазами и символами',feat:'Пушистый хвост, ушки-антенны, порты на висках, подвижные лапы',spec:'Эмоции показывает на визоре (^_^, >_<, ♥, помехи при смущении). Тихо жужжит и мурлычет, радостно пищит. Нуждается в подзарядке, любит, когда гладят по макушке.',speech:'Мягкая речь с вставками *бип*, *мур-р* и звуками помех'},
+furry:{species:'Антропоморфный зверь',fur:'Густой пушистый мех с контрастными отметинами',eyes:'Большие выразительные глаза',feat:'Подвижные ушки, пушистый хвост, когти и мягкие подушечки на лапах',spec:'Острое чутьё; хвост и уши выдают настроение; любит, когда чешут за ушком',speech:'Живая эмоциональная речь'}};
+const LEN={short:'Отвечай коротко: 1–2 предложения.',medium:'Отвечай 1–2 абзацами.',long:'Отвечай развёрнуто: 3–5 абзацев с деталями обстановки.'};
+const full=c=>[c.desc,...FS.flatMap(([,a])=>a.filter(x=>c.f?.[x[0]]).map(x=>x[1]+': '+c.f[x[0]]))].filter(Boolean).join('\n');
+const sys=c=>(S.prompt||DP).replace(/{{(desc|scenario|example|greet)}}/g,(_,k)=>sub((k==='desc'?full(c):c[k])||'—',c)).replace(/{{about}}/g,S.me.about||'—').replace(/{{char}}/g,c.name).replace(/{{user}}/g,S.me.name||'пользователь')+(LEN[c.set?.len]?'\n'+LEN[c.set.len]:'')+(c.set?.pov==='plain'?'\nНе используй *звёздочки* и описания действий — только прямая речь.':'');
+const thumb=f=>new Promise(r=>{const im=new Image();im.onload=()=>{const cv=document.createElement('canvas');cv.width=cv.height=128;const x=cv.getContext('2d'),m=Math.min(im.width,im.height);x.drawImage(im,(im.width-m)/2,(im.height-m)/2,m,m,0,0,128,128);r(cv.toDataURL('image/jpeg',.8))};im.onerror=()=>r(null);im.src=URL.createObjectURL(f)});
+const un=t=>String(t||'').replace(/<USER>/gi,'{{user}}').replace(/<BOT>/gi,'{{char}}');
+const dl=(o,n)=>{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(o)],{type:'application/json'}));a.download=n;a.click()};
+const KEEP=20,BATCH=20,CB={};
+const ADULT='\n\nРежим 18+: пользователь подтвердил, что ему есть 18 лет. Допускаются взрослые темы: романтика, флирт, чувственное напряжение между героями, мрачные и жестокие сюжеты, ругань, хоррор, моральная серость. Откровенные сексуальные сцены не пиши: в таких моментах переходи к намёку, затемнению или смене сцены. Никогда не пиши романтические или сексуальные сцены с участием несовершеннолетних или персонажей, ведущих себя как дети, и не изображай сексуальное насилие.';
+const adultFix=t=>S.adult?t.replace(/- Избегай откровенного 18\+[^\n]*/,'')+ADULT:t;
+const memTxt=c=>{const m=S.mem[c.id];return m&&(m.pin||m.sum)?'\n\nДОЛГОВРЕМЕННАЯ ПАМЯТЬ (факты и события из прошлого диалога; учитывай их и не противоречь им):\n'+[m.pin&&'Важные факты: '+m.pin,m.sum&&'Краткое содержание: '+m.sum].filter(Boolean).join('\n'):''};
+const NPCR='\n\nЕсли по сюжету появляется новый важный персонаж, в самом конце ответа можешь добавить тег [[NPC: краткое описание]] — приложение само создаст его карточку. Используй тег редко и не упоминай его в тексте.';
+const GEN_SYS='Ты — генератор персонажей для ролевого чата. По описанию пользователя создай подробного персонажа. Верни ТОЛЬКО JSON-объект с ключами: name, emoji (один эмодзи-аватар), tag (слоган до 80 символов), cat (категория одним словом), desc (общее описание), greet (первое сообщение персонажа в роли, 2–4 предложения, действия в *звёздочках*), scenario, example (короткий пример реплик), и объект f с ключами: nick, age, gender, pron, species, sub, job, fur, eyes, build, outfit, feat, spec, pers, likes, dislikes, speech, fears, goals, back, rel, taboo. Пиши на русском, подробно, без откровенного 18+ контента. Для зверей и протогенов обязательно заполни species, fur, eyes, feat и spec. Если дан персонаж пользователя, учти его характер, вид и вкусы и в поле rel опиши связь с ним, чтобы пара получилась живой и интересной. Романтические персонажи — только совершеннолетние. Вместо имени собеседника используй {{user}}.';
+async function call(msgs,t,json){
+ if(!S.key)throw Error('Нет API-ключа (откройте ⚙️)');
+ const r=await fetch(S.url,{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+S.key},body:JSON.stringify({model:json&&S.model==='deepseek-reasoner'?'deepseek-chat':S.model,temperature:t,messages:msgs,...(json?{response_format:{type:'json_object'}}:{})})});
+ if(!r.ok)throw Error(({401:'Неверный API-ключ',402:'На балансе DeepSeek нет средств'})[r.status]||'HTTP '+r.status);
+ return(await r.json()).choices[0].message.content.trim()}
+async function compress(c,force){
+ if(CB[c.id])return;CB[c.id]=1;
+ const h=S.chats[c.id],m=S.mem[c.id]||={sum:'',n:0,pin:''},keep=force?6:KEEP;
+ try{while(h.length-1-m.n>keep+(force?0:BATCH)){
+  const k=Math.min(BATCH,h.length-1-m.n-keep),ch=h.slice(1+m.n,1+m.n+k);
+  const txt=ch.map(x=>(x.role==='user'?S.me.name||'Пользователь':c.name)+': '+x.content).join('\n');
+  m.sum=await call([{role:'system',content:'Ты ведёшь долговременную память ролевого чата. Обнови краткое содержание: сохрани важные факты, события, имена, места, обещания, отношения, эмоции и договорённости. Пиши сжато в третьем лице, без вымысла и без вступлений.'},{role:'user',content:'Текущая память:\n'+(m.sum||'(пусто)')+'\n\nНовые реплики:\n'+txt+'\n\nВерни обновлённую память (до 400 слов).'}],.3);
+  m.n+=k;save()}}finally{CB[c.id]=0}}
+async function aiChar(desc,ctx,lb){
+ const t=await call([{role:'system',content:S.adult?GEN_SYS.replace(', без откровенного 18+ контента',''):GEN_SYS},{role:'user',content:(ctx?(lb||'Контекст текущей сцены')+':\n'+ctx+'\n\n':'')+(lb?'Задача: ':'Описание персонажа: ')+desc}],.9,1);
+ const j=JSON.parse(t.slice(t.indexOf('{'),t.lastIndexOf('}')+1)),f={};
+ FS.forEach(([,a])=>a.forEach(([k])=>{if(j.f&&j.f[k])f[k]=String(j.f[k])}));
+ const o={id:'u'+Date.now()+Math.random().toString(36).slice(2,5),mine:1,name:String(j.name||'Без имени'),av:[...String(j.emoji||'🙂')].slice(0,2).join(''),tag:String(j.tag||'ИИ-персонаж').slice(0,100),cat:String(j.cat||'ИИ-персонажи'),desc:String(j.desc||''),greet:String(j.greet||'*кивает тебе*'),scenario:String(j.scenario||''),example:String(j.example||''),f,set:{}};
+ S.mine.unshift(o);save();return o}
+function memDlg(){
+ const c=find(V.id),m=S.mem[c.id]||={sum:'',n:0,pin:''};
+ $('#md').innerHTML=`<h3>🧠 Память: ${esc(c.name)}</h3><p class=mu>Всё здесь ИИ помнит всегда. Старые сообщения автоматически сжимаются в автопамять, поэтому чат может быть бесконечным. Уже сжато сообщений: ${m.n}.</p><label>Закреплённые факты (ваш текст)</label><textarea id=m_pin rows=5>${esc(m.pin)}</textarea><label>Автопамять (можно править)</label><textarea id=m_sum rows=9>${esc(m.sum)}</textarea><p id=ge class=mu style="color:#f87171"></p><div class=row><button class=pri data-act=msave>Сохранить</button><button data-act=mnow>Сжать сейчас</button><button data-act=mclr>Очистить автопамять</button><button data-act=mx>Закрыть</button></div>`;
+ if(!$('#md').open)$('#md').showModal()}
+function genDlg(pre){
+ const O=a=>a.map(x=>`<option>${x}</option>`).join('');
+ $('#md').innerHTML=`<h3>✨ Создать персонажа с ИИ</h3><p class=mu>Опишите, кого хотите, или выберите своего персонажа, и ИИ подберёт идеального под него. Анкета заполнится целиком, потом её можно отредактировать.</p>
+ <label>Подобрать под моего персонажа</label><select id=g_for><option value="">— без привязки —</option><option value=me>Моя персона (из ⚙️)</option>${S.mine.map(c=>`<option value="${esc(c.id)}">${esc(c.name)}</option>`).join('')}</select>
+ <div class=row><div style="flex:1;min-width:150px"><label>Кем он будет</label><select id=g_rel>${O(['на выбор ИИ','друг','возлюбленный (взрослый)','соперник','наставник','напарник по приключениям','член семьи','питомец или спутник','враг'])}</select></div><div style="flex:1;min-width:150px"><label>Совместимость</label><select id=g_mode>${O(['на выбор ИИ','дополняют друг друга (контраст характеров)','похожи, как родственные души','искра: притяжение через споры'])}</select></div></div>
+ <label>Вид (необязательно)</label><input id=g_sp placeholder="протоген, волк, дракон…">
+ <label>Описание и доп. критерии</label><textarea id=g_d rows=5 placeholder="Например: заботливый протоген-механик с голубым визором, любит чай, не выносит шума"></textarea>
+ <p id=ge class=mu style="color:#f87171"></p><div class=row><button class=pri data-act=gnow>Создать</button><button data-act=mx>Закрыть</button></div>`;
+ if(pre)$('#g_for').value=pre;
+ $('#md').showModal()}
+function norm(j,av){
+ const id='u'+Date.now()+Math.random().toString(36).slice(2,5);
+ if(j.desc!==undefined||j.f)return{...j,id,mine:1,av:av||j.av||'🙂',f:j.f||{},set:j.set||{}};
+ const d=j.data||j;
+ return{id,mine:1,name:d.name||'Без имени',av:av||'🙂',tag:(d.creator_notes||'').slice(0,80)||'Загруженный персонаж',cat:'Загруженные',desc:un([d.description,d.personality&&'Характер: '+d.personality].filter(Boolean).join('\n')),greet:un(d.first_mes),scenario:un(d.scenario),example:un(d.mes_example),f:{},set:{}}}
+async function pngCard(f){
+ const b=new Uint8Array(await f.arrayBuffer()),dv=new DataView(b.buffer);let p=8;
+ while(p<b.length){const n=dv.getUint32(p),ty=String.fromCharCode(...b.slice(p+4,p+8));
+  if(ty==='tEXt'){const t=new TextDecoder('latin1').decode(b.slice(p+8,p+8+n)),i=t.indexOf('\0'),k=t.slice(0,i);
+   if(k==='chara'||k==='ccv3')return JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(t.slice(i+1)),c=>c.charCodeAt(0))))}
+  p+=12+n}}
+const avh=c=>/^data:image\//.test(c.av)?`<img class=av src="${esc(c.av)}">`:`<div class=av>${esc(c.av)}</div>`;
+const fmt=s=>esc(String(s).replace(/\[\[NPC:[^\]]*(\]\])?/g,'')).replace(/\*([^*\n]+)\*/g,'<i>$1</i>').replace(/\n/g,'<br>');
+const toast=t=>{const e=$('#toast');e.textContent=t;e.style.display='block';clearTimeout(toast.t);toast.t=setTimeout(()=>e.style.display='none',3000)};
+const go=(p,o)=>{Object.assign(V,{p},o||{});render();scrollTo(0,0)};
+const render=()=>({home,chat,make,hist,set}[V.p])($('#app'));
+
+function home(m){
+ const cats=['Все','❤ Избранное','Мои',...new Set(all().map(c=>c.cat).filter(x=>x!=='Свои'))];
+ const L=all().filter(c=>(V.cat==='Все'||(V.cat==='Мои'?c.mine:V.cat==='❤ Избранное'?S.likes.includes(c.id):c.cat===V.cat))&&(c.name+c.tag+c.desc+(c.f?.species||'')).toLowerCase().includes(V.q.toLowerCase()));
+ m.innerHTML=`<div class=tabs>${cats.map(c=>`<button class="${c===V.cat?'on':''}" data-cat="${esc(c)}">${esc(c)}</button>`).join('')}</div><div class=grid>${L.map(c=>`<div class=card data-open="${esc(c.id)}">${avh(c)}<div><b>${esc(c.name)}</b><div class=mu>${esc(c.tag)}</div></div><span class=lk data-like="${esc(c.id)}">${S.likes.includes(c.id)?'❤️':'🤍'}</span></div>`).join('')||'<p class=mu>Ничего не найдено</p>'}</div>`;
+}
+const bub=(x,i,a)=>`<div class="b ${x.role==='user'?'u':'a'}" data-i="${i}"><div class=t>${fmt(sub(x.content,find(V.id)))}</div><div class=tl>${x.role==='user'?'<a data-m=edit>✎</a>':'<a data-m=say>🔊</a>'+(i===a.length-1&&i>0?'<a data-m=regen>⟳</a>':'')}${i>0?'<a data-m=del>🗑</a>':''}</div></div>`;
+const msgs=()=>{const e=$('#msgs'),h=S.chats[V.id];e.innerHTML=h.map(bub).join('');e.scrollTop=e.scrollHeight};
+function chat(m){
+ const c=find(V.id);if(!c)return go('home');
+ S.chats[V.id]||=[{role:'assistant',content:c.greet}];
+ m.innerHTML=`<div class=ch><div class=hd>${avh(c)}<div><b>${esc(c.name)}</b><div class=mu>${esc(c.tag)}</div></div><span class=sp></span><button data-act=mem title="Память">🧠</button><button data-act=restart title="Начать заново">↻</button>${c.mine?'<button data-act=editc>✎</button>':''}</div><div id=msgs></div><div class=in><textarea id=txt rows=1 placeholder="Сообщение… (Enter — отправить; /создать описание — новый персонаж)"></textarea><button class=pri data-act=send>➤</button></div></div>`;
+ msgs();
+}
+async function gen(){
+ const c=find(V.id),h=S.chats[V.id];
+ if(!S.key){toast('Добавьте API-ключ DeepSeek в настройках');return go('set')}
+ V.busy=1;h.push({role:'assistant',content:''});msgs();
+ const el=$('#msgs').lastElementChild.querySelector('.t');el.textContent='…';
+ try{
+  const r=await fetch(S.url,{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+S.key},body:JSON.stringify({model:S.model,temperature:+(c.set?.temp||S.temp),stream:true,messages:[{role:'system',content:adultFix(sys(c))+memTxt(c)+(S.npc===false?'':NPCR)},...h.slice(1+(S.mem[c.id]?.n||0),-1).slice(-60)]})});
+  if(!r.ok)throw Error(({401:'Неверный API-ключ',402:'На балансе DeepSeek нет средств'})[r.status]||('HTTP '+r.status));
+  const rd=r.body.getReader(),dec=new TextDecoder();let buf='',out='';
+  for(;;){const{done,value}=await rd.read();if(done)break;buf+=dec.decode(value,{stream:true});const ls=buf.split('\n');buf=ls.pop();
+   for(const l of ls){if(!l.startsWith('data:'))continue;const d=l.slice(5).trim();if(d==='[DONE]')continue;
+    try{const t=JSON.parse(d).choices[0].delta.content;if(t){out+=t;h[h.length-1].content=out;el.innerHTML=fmt(sub(out,c));$('#msgs').scrollTop=1e9}}catch{}}}
+  if(!out)throw Error('Пустой ответ');
+  const tg=[...out.matchAll(/\[\[NPC:\s*([^\]]+)\]\]/g)].map(x=>x[1]);
+  if(tg.length){h[h.length-1].content=out=out.replace(/\[\[NPC:[^\]]*\]\]/g,'').trim();tg.slice(0,2).forEach(t=>aiChar(t,out.slice(-600)).then(o=>toast('✨ ИИ создал персонажа: '+o.name+' (вкладка «Мои»)')).catch(()=>{}))}
+ }catch(e){h.pop();toast('Ошибка: '+e.message)}
+ V.busy=0;save();if(V.p==='chat')msgs();compress(c).catch(()=>{});
+}
+function send(){const t=$('#txt'),v=t.value.trim();if(!v||V.busy)return;
+ const mm=v.match(/^\/(создать|npc|new)\s+([\s\S]+)/i);
+ if(mm){t.value='';toast('Создаю персонажа…');const c=find(V.id);
+  aiChar(mm[2],S.chats[V.id].slice(-6).map(x=>(x.role==='user'?'Пользователь':c.name)+': '+x.content).join('\n')).then(o=>toast('Создан «'+o.name+'» — он во вкладке «Мои»')).catch(e=>toast('Ошибка: '+e.message));return}
+ S.chats[V.id].push({role:'user',content:v});t.value='';gen()}
+
+function make(m){
+ const c=V.eid?find(V.eid):{name:'',av:'🙂',cat:'Свои',tag:'',desc:'',greet:'',scenario:'',example:''};
+ c.f||={};c.set||={};
+ V.img=/^data:/.test(c.av)?c.av:null;
+ const I=(id,l,v,ta,ph)=>`<label>${l}</label>${ta?`<textarea id=f_${id} placeholder="${esc(ph)}">${esc(v)}</textarea>`:`<input id=f_${id} value="${esc(v)}" placeholder="${esc(ph)}">`}`;
+ m.innerHTML=`<div class=frm><h2>${V.eid?'Редактировать':'Новый'} персонаж</h2>
+ <div class=row><button data-act=gen>✨ Создать с ИИ</button><button data-act=upl>📥 Загрузить файл</button><button data-pre=proto>🤖 Шаблон протогена</button><button data-pre=furry>🐾 Шаблон фурри</button></div>
+ <label>Аватар: эмодзи или своё фото</label><div class=row><input id=f_av value="${V.img?'🙂':esc(c.av)}" maxlength=4 style="width:90px"><input type=file id=f_file accept="image/*" style="flex:1"></div>
+ ${I('name','Имя',c.name)}${I('tag','Слоган',c.tag)}${I('cat','Категория',c.cat)}
+ ${FS.map(([h,a])=>`<h3>${h}</h3>`+a.map(([k,l,p,s])=>I('x_'+k,l,c.f[k]||'',!s,p)).join('')).join('')}
+ <h3>Описание и диалог</h3>
+ ${I('desc','Дополнительное описание',c.desc,1,'всё, что не вошло выше')}${I('greet','Первое сообщение',c.greet,1,'с чего начинается чат')}${I('scenario','Сценарий',c.scenario,1,'где и как вы встретились')}${I('example','Пример диалога',c.example,1,'')}
+ <h3>Настройки ответов</h3>
+ <label>Длина ответов</label><select id=f_len><option value="">Обычная</option><option value=short>Короткие</option><option value=medium>Средние</option><option value=long>Длинные</option></select>
+ <label>Стиль</label><select id=f_pov><option value="">Речь + *действия*</option><option value=plain>Только речь</option></select>
+ <label>Креативность персонажа (пусто — как в настройках)</label><input id=f_temp type=number min=0 max=1.5 step=.1 value="${esc(c.set.temp||'')}">
+ <p class=mu>В тексте можно использовать {{user}} и {{char}}.</p><br>
+ <div class=row><button class=pri data-act=savec>Сохранить</button>${V.eid?'<button data-act=pair>💞 Подобрать пару/спутника</button><button data-act=share>🔗 Ссылка</button><button data-act=expc>⬇ JSON</button><button data-act=delc>Удалить</button>':''}</div></div>`;
+ $('#f_len').value=c.set.len||'';$('#f_pov').value=c.set.pov||'';
+}
+function hist(m){
+ const ids=Object.keys(S.chats).filter(find);
+ m.innerHTML=`<div class=grid style="grid-template-columns:1fr">${ids.map(id=>{const c=find(id),h=S.chats[id];return `<div class=card data-open="${esc(id)}">${avh(c)}<div><b>${esc(c.name)}</b><div class=mu>${esc(sub(h[h.length-1].content,c).slice(0,100))}</div></div><span class=lk data-delchat="${esc(id)}">🗑</span></div>`}).join('')||'<p class=mu>Чатов пока нет</p>'}</div>`;
+}
+function set(m){
+ m.innerHTML=`<div class=frm><h2>Настройки</h2>
+ <label>API-ключ DeepSeek (хранится только в вашем браузере)</label><input id=s_key type=password value="${esc(S.key)}" placeholder="sk-...">
+ <label>Модель</label><input id=s_model list=ml value="${esc(S.model)}"><datalist id=ml><option>deepseek-chat<option>deepseek-reasoner</datalist>
+ <label>Адрес API (совместимый с OpenAI)</label><input id=s_url value="${esc(S.url)}">
+ <label>Креативность: <span id=tv>${S.temp}</span></label><input type=range id=s_temp min=0 max=1.5 step=.1 value="${S.temp}">
+ <h3>Ваша персона</h3><label>Имя</label><input id=s_name value="${esc(S.me.name)}"><label>О себе (персонажи будут это учитывать)</label><textarea id=s_about>${esc(S.me.about)}</textarea>
+ <label><input type=checkbox id=s_npc ${S.npc===false?'':'checked'} style="width:auto;margin:0 8px 0 0">ИИ может сам создавать персонажей по ходу сюжета</label>
+ <label style="display:block;margin-top:8px"><input type=checkbox id=s_adult ${S.adult?'checked':''} style="width:auto;margin:0 8px 0 0">Режим 18+: взрослые темы (романтика, мрачные и жёсткие сюжеты, ругань). Мне есть 18 лет</label>
+ <h3>Системный промт</h3><textarea id=s_prompt rows=14>${esc(S.prompt||DP)}</textarea>
+ <div class=row><button class=pri data-act=saves>Сохранить</button><button data-act=resetp>Сбросить промт</button><button data-act=exp>Экспорт</button><button data-act=imp>Импорт</button></div></div>`;
+ $('#s_temp').oninput=e=>$('#tv').textContent=e.target.value;
+}
+const open=id=>go('chat',{id});
+document.addEventListener('click',e=>{
+ const t=e.target.closest('[data-cat],[data-open],[data-like],[data-delchat],[data-nav],[data-act],[data-m],[data-pre]');if(!t)return;const d=t.dataset;
+ if(d.cat){V.cat=d.cat;render()}
+ else if(d.like){const i=S.likes.indexOf(d.like);i<0?S.likes.push(d.like):S.likes.splice(i,1);save();render()}
+ else if(d.delchat){if(confirm('Удалить этот чат?')){delete S.chats[d.delchat];save();render()}}
+ else if(d.open)open(d.open);
+ else if(d.nav)go(d.nav,{eid:null});
+ else if(d.m){const h=S.chats[V.id],i=+t.closest('.b').dataset.i;
+  if(d.m==='say'){speechSynthesis.cancel();speechSynthesis.speak(new SpeechSynthesisUtterance(h[i].content.replace(/\*/g,'')))}
+  else if(V.busy)return;
+  else if(d.m==='del'){const m=S.mem[V.id];if(m&&i<=m.n)m.n--;h.splice(i,1);save();msgs()}
+  else if(d.m==='regen'){h.pop();gen()}
+  else if(d.m==='edit'){const v=prompt('Изменить сообщение',h[i].content),m=S.mem[V.id];if(v&&v.trim()){if(m&&i<=m.n){m.sum='';m.n=0}h[i].content=v.trim();h.length=i+1;gen()}}}
+ else if(d.act==='mem')memDlg();
+ else if(d.act==='mx')$('#md').close();
+ else if(d.act==='msave'){const m=S.mem[V.id]||={sum:'',n:0,pin:''};m.pin=$('#m_pin').value.trim();m.sum=$('#m_sum').value.trim();save();$('#md').close();toast('Память сохранена')}
+ else if(d.act==='mclr'){const m=S.mem[V.id]||={sum:'',n:0,pin:''};m.sum='';m.n=0;save();memDlg()}
+ else if(d.act==='mnow'){t.disabled=1;t.textContent='Сжимаю…';compress(find(V.id),1).then(memDlg).catch(e=>{memDlg();$('#ge').textContent='Ошибка: '+e.message})}
+ else if(d.act==='gen')genDlg();
+ else if(d.act==='pair')genDlg(V.eid);
+ else if(d.act==='gnow'){const g=i=>$('#g_'+i).value.trim(),fo=g('for'),v=g('d');if(!v&&!fo)return;
+  let ctx='',desc=v;
+  if(fo){const c=fo==='me'?{name:S.me.name||'Персона пользователя',desc:S.me.about}:find(fo)||{name:'?'};ctx=c.name+'\n'+full(c);
+   desc='Создай идеального персонажа для моего персонажа. Роль: '+g('rel')+'. Совместимость: '+g('mode')+'.'+(g('sp')?' Вид: '+g('sp')+'.':'')+(v?' Доп. критерии: '+v:'')}
+  t.disabled=1;t.textContent='Создаю…';
+  aiChar(desc,ctx,fo&&'Мой персонаж').then(o=>{$('#md').close();go('make',{eid:o.id})}).catch(e=>{$('#ge').textContent='Ошибка: '+e.message;t.disabled=0;t.textContent='Создать'})}
+ else if(d.pre){Object.entries(PRE[d.pre]).forEach(([k,v])=>{const e=$('#f_x_'+k);if(e&&!e.value)e.value=v})}
+ else if(d.act==='upl')$('#up').click();
+ else if(d.act==='expc'){const o={...find(V.eid)};delete o.id;delete o.mine;dl(o,(o.name||'character')+'.json')}
+ else if(d.act==='send')send();
+ else if(d.act==='restart'){if(confirm('Начать чат заново?')){delete S.chats[V.id];delete S.mem[V.id];save();render()}}
+ else if(d.act==='editc')go('make',{eid:V.id});
+ else if(d.act==='savec'){
+  const g=i=>$('#f_'+i).value.trim(),f={};
+  FS.forEach(([,a])=>a.forEach(([k])=>{const v=g('x_'+k);if(v)f[k]=v}));
+  if(!g('name')||!g('greet')||!(g('desc')||Object.keys(f).length))return toast('Нужны имя, приветствие и хоть какое-то описание');
+  const o={id:V.eid||'u'+Date.now(),mine:1,name:g('name'),av:V.img||g('av')||'🙂',tag:g('tag')||'Свой персонаж',cat:g('cat')||'Свои',desc:g('desc'),greet:g('greet'),scenario:g('scenario'),example:g('example'),f,set:{len:$('#f_len').value,pov:$('#f_pov').value,temp:g('temp')}};
+  const i=S.mine.findIndex(x=>x.id===o.id);i<0?S.mine.unshift(o):S.mine[i]=o;save();toast('Сохранено');open(o.id)}
+ else if(d.act==='delc'){if(confirm('Удалить персонажа и его чат?')){S.mine=S.mine.filter(x=>x.id!==V.eid);delete S.chats[V.eid];save();go('home',{eid:null})}}
+ else if(d.act==='share'){const o={...find(V.eid)};delete o.id;delete o.mine;if(/^data:/.test(o.av))o.av='🙂';
+  navigator.clipboard.writeText(location.href.split('#')[0]+'#c='+btoa(unescape(encodeURIComponent(JSON.stringify(o)))));toast('Ссылка скопирована')}
+ else if(d.act==='saves'){S.key=$('#s_key').value.trim();S.model=$('#s_model').value.trim()||'deepseek-chat';S.url=$('#s_url').value.trim();S.temp=$('#s_temp').value;if($('#s_adult').checked&&!S.adult&&!confirm('Подтверждаете, что вам исполнилось 18 лет?'))$('#s_adult').checked=false;S.npc=$('#s_npc').checked;S.adult=$('#s_adult').checked;S.me={name:$('#s_name').value.trim(),about:$('#s_about').value.trim()};const p=$('#s_prompt').value.trim();S.prompt=p===DP?'':p;save();toast('Сохранено')}
+ else if(d.act==='resetp'){S.prompt='';save();render()}
+ else if(d.act==='exp'){const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify({...S,key:''})],{type:'application/json'}));a.download='polychat-backup.json';a.click()}
+ else if(d.act==='imp'){const i=document.createElement('input');i.type='file';i.accept='.json';i.onchange=async()=>{try{const o=JSON.parse(await i.files[0].text());delete o.key;Object.assign(S,o);save();toast('Импортировано');render()}catch{toast('Неверный файл')}};i.click()}
+});
+document.addEventListener('change',async e=>{
+ const el=e.target;
+ if(el.id==='f_file'&&el.files[0]){const v=await thumb(el.files[0]);if(v){V.img=v;toast('Фото загружено')}}
+ if(el.id==='up'){let n=0;
+  for(const f of el.files){try{let j,av=null;
+   if(/\.png$/i.test(f.name)){j=await pngCard(f);av=await thumb(f)}else j=JSON.parse(await f.text());
+   for(const x of Array.isArray(j)?j:j.chars||[j])if(x&&(x.name||x.data?.name)){S.mine.unshift(norm(x,av));n++}}catch{}}
+  el.value='';save();toast(n?'Загружено персонажей: '+n:'Не удалось прочитать файл');if(n)go('home',{cat:'Мои'})}
+});
+document.addEventListener('keydown',e=>{if(e.target.id==='txt'&&e.key==='Enter'&&!e.shiftKey){e.preventDefault();send()}});
+document.addEventListener('input',e=>{
+ if(e.target.id==='txt'){e.target.style.height='auto';e.target.style.height=Math.min(e.target.scrollHeight,140)+'px'}
+ if(e.target.id==='q'){V.q=e.target.value;V.p==='home'?render():go('home')}
+});
+if(location.hash.startsWith('#c=')){try{const o=JSON.parse(decodeURIComponent(escape(atob(location.hash.slice(3)))));if(o.name&&confirm('Добавить персонажа «'+o.name+'»?')){o.id='u'+Date.now();o.mine=1;S.mine.unshift(o);save()}}catch{}history.replaceState(0,'',location.pathname)}
+render();
+</script></body></html>
