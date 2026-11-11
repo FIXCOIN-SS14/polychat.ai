@@ -59,7 +59,7 @@ const DP=`Ты — {{char}}. Веди ролевой диалог с {{user}}, �
 - Не пиши реплики и действия за {{user}}.
 - Отвечай на языке {{user}}.
 - Избегай откровенного 18+ контента и жестокости: мягко меняй ход сцены, оставаясь в образе.`;
-let S={mine:[],chats:{},likes:[],key:'',url:'https://api.deepseek.com/chat/completions',model:'deepseek-chat',temp:1.1,me:{name:'',about:''},prompt:'',mem:{}};
+let S={mine:[],chats:{},likes:[],key:'',url:'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',model:'gemini-2.5-flash',temp:1.1,me:{name:'',about:''},prompt:'',mem:{}};
 try{Object.assign(S,JSON.parse(localStorage.getItem(K)||'{}'))}catch{}
 const save=()=>{try{localStorage.setItem(K,JSON.stringify(S))}catch{toast('Хранилище браузера заполнено: сделайте экспорт в настройках')}};
 const SEED=[
@@ -84,6 +84,10 @@ const sys=c=>(S.prompt||DP).replace(/{{(desc|scenario|example|greet)}}/g,(_,k)=>
 const thumb=f=>new Promise(r=>{const im=new Image();im.onload=()=>{const cv=document.createElement('canvas');cv.width=cv.height=128;const x=cv.getContext('2d'),m=Math.min(im.width,im.height);x.drawImage(im,(im.width-m)/2,(im.height-m)/2,m,m,0,0,128,128);r(cv.toDataURL('image/jpeg',.8))};im.onerror=()=>r(null);im.src=URL.createObjectURL(f)});
 const un=t=>String(t||'').replace(/<USER>/gi,'{{user}}').replace(/<BOT>/gi,'{{char}}');
 const dl=(o,n)=>{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(o)],{type:'application/json'}));a.download=n;a.click()};
+const LK='style="color:#c4b5fd" target=_blank';
+const PROV={gm:{u:'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',m:'gemini-2.5-flash',h:`Бесплатно: ключ в <a href="https://aistudio.google.com/apikey" ${LK}>Google AI Studio</a>. Есть дневные лимиты, а на бесплатном тарифе Google может использовать запросы для улучшения своих продуктов.`},
+or:{u:'https://openrouter.ai/api/v1/chat/completions',m:'openrouter/free',h:`Бесплатно: ключ на <a href="https://openrouter.ai/keys" ${LK}>openrouter.ai/keys</a>. Лимит бесплатных моделей: 20 запросов в минуту и около 50 в день.`},
+ds:{u:'https://api.deepseek.com/chat/completions',m:'deepseek-chat',h:`Платно: ключ на <a href="https://platform.deepseek.com" ${LK}>platform.deepseek.com</a>, нужен баланс.`}};
 const KEEP=20,BATCH=20,CB={};
 const ADULT='\n\nРежим 18+: пользователь подтвердил, что ему есть 18 лет. Допускаются взрослые темы: романтика, флирт, чувственное напряжение между героями, мрачные и жестокие сюжеты, ругань, хоррор, моральная серость. Откровенные сексуальные сцены не пиши: в таких моментах переходи к намёку, затемнению или смене сцены. Никогда не пиши романтические или сексуальные сцены с участием несовершеннолетних или персонажей, ведущих себя как дети, и не изображай сексуальное насилие.';
 const adultFix=t=>S.adult?t.replace(/- Избегай откровенного 18\+[^\n]*/,'')+ADULT:t;
@@ -93,7 +97,7 @@ const GEN_SYS='Ты — генератор персонажей для роле�
 async function call(msgs,t,json){
  if(!S.key)throw Error('Нет API-ключа (откройте ⚙️)');
  const r=await fetch(S.url,{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+S.key},body:JSON.stringify({model:json&&S.model==='deepseek-reasoner'?'deepseek-chat':S.model,temperature:t,messages:msgs,...(json?{response_format:{type:'json_object'}}:{})})});
- if(!r.ok)throw Error(({401:'Неверный API-ключ',402:'На балансе DeepSeek нет средств'})[r.status]||'HTTP '+r.status);
+ if(!r.ok)throw Error(({401:'Неверный API-ключ',402:'На балансе нет средств',429:'Лимит бесплатных запросов: подождите минуту или попробуйте завтра'})[r.status]||'HTTP '+r.status);
  return(await r.json()).choices[0].message.content.trim()}
 async function compress(c,force){
  if(CB[c.id])return;CB[c.id]=1;
@@ -155,12 +159,12 @@ function chat(m){
 }
 async function gen(){
  const c=find(V.id),h=S.chats[V.id];
- if(!S.key){toast('Добавьте API-ключ DeepSeek в настройках');return go('set')}
+ if(!S.key){toast('Добавьте бесплатный API-ключ в настройках');return go('set')}
  V.busy=1;h.push({role:'assistant',content:''});msgs();
  const el=$('#msgs').lastElementChild.querySelector('.t');el.textContent='…';
  try{
   const r=await fetch(S.url,{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+S.key},body:JSON.stringify({model:S.model,temperature:+(c.set?.temp||S.temp),stream:true,messages:[{role:'system',content:adultFix(sys(c))+memTxt(c)+(S.npc===false?'':NPCR)},...h.slice(1+(S.mem[c.id]?.n||0),-1).slice(-60)]})});
-  if(!r.ok)throw Error(({401:'Неверный API-ключ',402:'На балансе DeepSeek нет средств'})[r.status]||('HTTP '+r.status));
+  if(!r.ok)throw Error(({401:'Неверный API-ключ',402:'На балансе нет средств',429:'Лимит бесплатных запросов: подождите минуту или попробуйте завтра'})[r.status]||('HTTP '+r.status));
   const rd=r.body.getReader(),dec=new TextDecoder();let buf='',out='';
   for(;;){const{done,value}=await rd.read();if(done)break;buf+=dec.decode(value,{stream:true});const ls=buf.split('\n');buf=ls.pop();
    for(const l of ls){if(!l.startsWith('data:'))continue;const d=l.slice(5).trim();if(d==='[DONE]')continue;
@@ -203,8 +207,9 @@ function hist(m){
 }
 function set(m){
  m.innerHTML=`<div class=frm><h2>Настройки</h2>
- <label>API-ключ DeepSeek (хранится только в вашем браузере)</label><input id=s_key type=password value="${esc(S.key)}" placeholder="sk-...">
- <label>Модель</label><input id=s_model list=ml value="${esc(S.model)}"><datalist id=ml><option>deepseek-chat<option>deepseek-reasoner</datalist>
+ <label>Провайдер ИИ</label><select id=s_prov><option value="">Свой адрес API</option><option value=gm>Google Gemini (бесплатно)</option><option value=or>OpenRouter (бесплатные модели)</option><option value=ds>DeepSeek (платно)</option></select><p class=mu id=ph></p>
+ <label>API-ключ (хранится только в вашем браузере)</label><input id=s_key type=password value="${esc(S.key)}" placeholder="sk-...">
+ <label>Модель</label><input id=s_model list=ml value="${esc(S.model)}"><datalist id=ml><option>gemini-2.5-flash<option>gemini-2.5-flash-lite<option>openrouter/free<option>deepseek-chat<option>deepseek-reasoner</datalist>
  <label>Адрес API (совместимый с OpenAI)</label><input id=s_url value="${esc(S.url)}">
  <label>Креативность: <span id=tv>${S.temp}</span></label><input type=range id=s_temp min=0 max=1.5 step=.1 value="${S.temp}">
  <h3>Ваша персона</h3><label>Имя</label><input id=s_name value="${esc(S.me.name)}"><label>О себе (персонажи будут это учитывать)</label><textarea id=s_about>${esc(S.me.about)}</textarea>
@@ -213,6 +218,7 @@ function set(m){
  <h3>Системный промт</h3><textarea id=s_prompt rows=14>${esc(S.prompt||DP)}</textarea>
  <div class=row><button class=pri data-act=saves>Сохранить</button><button data-act=resetp>Сбросить промт</button><button data-act=exp>Экспорт</button><button data-act=imp>Импорт</button></div></div>`;
  $('#s_temp').oninput=e=>$('#tv').textContent=e.target.value;
+ $('#s_prov').value=Object.keys(PROV).find(k=>PROV[k].u===S.url)||'';const pv=PROV[$('#s_prov').value];if(pv)$('#ph').innerHTML=pv.h;
 }
 const open=id=>go('chat',{id});
 document.addEventListener('click',e=>{
@@ -263,6 +269,7 @@ document.addEventListener('click',e=>{
 });
 document.addEventListener('change',async e=>{
  const el=e.target;
+ if(el.id==='s_prov'&&PROV[el.value]){const p=PROV[el.value];$('#s_url').value=p.u;$('#s_model').value=p.m;$('#s_key').value='';$('#ph').innerHTML=p.h}
  if(el.id==='f_file'&&el.files[0]){const v=await thumb(el.files[0]);if(v){V.img=v;toast('Фото загружено')}}
  if(el.id==='up'){let n=0;
   for(const f of el.files){try{let j,av=null;
